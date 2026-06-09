@@ -18,6 +18,7 @@ import jakarta.annotation.Resource;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 
 /**
  * 文章异步任务服务
@@ -77,9 +78,17 @@ public class ArticleAsyncService {
                     handleAgentMessage(taskId, message, state);
                 });
             } else {
+                // Consumer是Java中的函数式接口。函数式接口是只有一个抽象方法的接口。Java可以用lambda表达式来简写。
+                // 等价于匿名内部类，传进去一个匿名内部类对象，该对象执行accept时，就会handleAgentMessage方法。
                 articleAgentService.executePhase1_GenerateTitles(state, message -> {
                     handleAgentMessage(taskId, message, state);
                 });
+//                articleAgentService.executePhase1_GenerateTitles(state, new Consumer<String>() {
+//                    @Override
+//                    public void accept(String message) {
+//                        handleAgentMessage(taskId, message, state);
+//                    }
+//                });
             }
             
             // 保存标题方案到数据库

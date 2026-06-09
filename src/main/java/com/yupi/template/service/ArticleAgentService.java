@@ -126,8 +126,10 @@ public class ArticleAgentService {
         String prompt = PromptConstant.AGENT1_TITLE_PROMPT
                 .replace("{topic}", state.getTopic())
                 + getStylePrompt(state.getStyle());
-
+        // 非流式调用大模型
         String content = callLlm(prompt);
+        // 通过GSON解析，把大模型返回的json格式的回复，转换为List<TitleOption>对象。
+        // 把大模型返回的JSON，反序列，转换成JAVA对象
         List<ArticleState.TitleOption> titleOptions = parseJsonListResponse(
                 content, 
                 new TypeToken<List<ArticleState.TitleOption>>(){}, 

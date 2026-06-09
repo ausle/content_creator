@@ -79,6 +79,7 @@ public class ArticleController {
                 loginUser
         );
 
+        // 这是异步阶段，会新起一个子线程去处理，主线程已经把taskID返给前端。
         // 异步执行阶段1：生成标题方案
         articleAsyncService.executePhase1(
                 taskId, 
@@ -89,6 +90,11 @@ public class ArticleController {
         return ResultUtils.success(taskId);
     }
 
+
+    /**
+        创建文章任务后，会生成taskID，前端收到到taskID后，前端会立刻建立EventSource，尝试获取SseEmitter，建立SSE实时进度连接。
+        后端此时创建并返回一个SseEmitter，后续，后端就能通过SseEmitter持续向前端发流式消息呢。
+     **/
     /**
      * SSE 进度推送
      */

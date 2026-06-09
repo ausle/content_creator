@@ -72,6 +72,8 @@ public class SseEmitterManager {
         }
         
         try {
+            // Spring框架提供了SseEmitter来实现，服务器单向的向客户端来发送流式消息。
+            // message是对应的消息。
             emitter.send(SseEmitter.event()
                     .data(message)
                     .reconnectTime(SSE_RECONNECT_TIME_MS));
