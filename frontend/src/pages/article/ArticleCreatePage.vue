@@ -10,14 +10,21 @@
         </div>
 
         <div class="flow-timeline">
-          <div
+          <button
             v-for="(step, index) in agentSteps"
             :key="index"
+            type="button"
             :class="['flow-item', {
-              'active': currentStep === index,
+              'active': activeStep === index,
               'completed': currentStep > index,
-              'pending': currentStep < index
+              'pending': currentStep < index,
+              'navigable': canNavigateToStep(index)
             }]"
+            :disabled="!canNavigateToStep(index)"
+            :tabindex="canNavigateToStep(index) ? 0 : undefined"
+            :aria-disabled="!canNavigateToStep(index)"
+            :title="canNavigateToStep(index) ? `查看${step.title}` : ''"
+            @click="navigateToStep(index)"
           >
             <div class="flow-indicator">
               <LoadingOutlined v-if="currentStep === index && isCreating" class="spin-icon" />
@@ -32,7 +39,7 @@
                 执行中...
               </div>
             </div>
-          </div>
+          </button>
         </div>
 
       </aside>
@@ -42,7 +49,7 @@
         <!-- 阶段切换（带过渡动画） -->
         <Transition name="fade-slide" mode="out-in">
           <!-- 输入状态 -->
-          <div v-if="currentPhase === 'INPUT'" key="input" class="input-state">
+          <div v-if="displayPhase === 'INPUT'" key="input" class="input-state">
           <div class="input-card">
             <div class="input-header">
               <h1 class="input-title">创作新文章</h1>
@@ -127,7 +134,7 @@
           </div>
 
           <!-- 标题生成中 -->
-          <div v-else-if="currentPhase === 'TITLE_GENERATING'" key="title-generating" class="loading-stage">
+          <div v-else-if="displayPhase === 'TITLE_GENERATING'" key="title-generating" class="loading-stage">
             <a-spin size="large" />
             <h3>AI 正在生成标题方案...</h3>
             <p>稍等片刻，即将为您呈现多个精彩标题</p>
@@ -135,15 +142,15 @@
 
           <!-- 标题选择阶段 -->
           <TitleSelectingStage
-            v-else-if="currentPhase === 'TITLE_SELECTING'"
+            v-else-if="displayPhase === 'TITLE_SELECTING'"
             key="title-selecting"
-            :title-options="titleOptions"
+            :title-options="displayTitleOptions"
             :loading="confirmLoading"
             @confirm="handleConfirmTitle"
           />
 
           <!-- 大纲生成中（流式展示） -->
-          <div v-else-if="currentPhase === 'OUTLINE_GENERATING'" key="outline-generating" class="outline-generating-state">
+          <div v-else-if="displayPhase === 'OUTLINE_GENERATING'" key="outline-generating" class="outline-generating-state">
             <!-- 标题预览 -->
             <div v-if="article.mainTitle" class="preview-header">
               <h1 class="article-title">{{ article.mainTitle }}</h1>
@@ -178,7 +185,7 @@
 
           <!-- 大纲编辑阶段 -->
           <OutlineEditingStage
-            v-else-if="currentPhase === 'OUTLINE_EDITING'"
+            v-else-if="displayPhase === 'OUTLINE_EDITING'"
             key="outline-editing"
             :outline="outline"
             :loading="confirmLoading"
@@ -187,7 +194,7 @@
           />
 
           <!-- 正文生成阶段 -->
-          <div v-else-if="currentPhase === 'CONTENT_GENERATING'" key="content-generating" class="creating-state">
+          <div v-else-if="displayPhase === 'CONTENT_GENERATING'" key="content-generating" class="creating-state">
           <!-- 标题预览 -->
           <div v-if="article.mainTitle" class="preview-header">
             <h1 class="article-title">{{ article.mainTitle }}</h1>
@@ -222,7 +229,7 @@
           </div>
 
           <!-- 配图进度 -->
-          <div v-if="currentStep === 4 && imageProgress > 0" class="image-progress-box">
+          <div v-if="activeStep === 4 && imageProgress > 0" class="image-progress-box">
             <div class="progress-header">
               <PictureOutlined />
               <span>正在生成配图</span>
@@ -232,14 +239,14 @@
           </div>
 
           <!-- 加载占位 -->
-          <div v-if="currentStep === 0 && !article.mainTitle" class="loading-placeholder">
+          <div v-if="activeStep === 0 && !article.mainTitle" class="loading-placeholder">
             <a-spin size="large" />
             <p>AI 正在构思标题...</p>
           </div>
           </div>
 
           <!-- 创作完成 -->
-          <div v-else-if="currentPhase === 'COMPLETED'" key="completed" class="completed-state">
+          <div v-else-if="displayPhase === 'COMPLETED'" key="completed" class="completed-state">
           <div class="success-header">
             <CheckCircleFilled class="success-icon" />
             <span>文章创作完成！</span>
@@ -346,7 +353,7 @@
           <div class="progress-info">
             <div class="progress-step">
               <span class="step-label">当前步骤</span>
-              <span class="step-value">{{ agentSteps[currentStep]?.title }}</span>
+              <span class="step-value">{{ currentProgressStepTitle }}</span>
             </div>
             <div class="progress-step">
               <span class="step-label">已完成</span>
@@ -608,6 +615,7 @@ const isCompleted = ref(false)
 const isStreaming = ref(false)
 const isOutlineStreaming = ref(false)
 const currentStep = ref(0)
+const viewingStep = ref<number | null>(null)
 const taskId = ref('')
 const errorVisible = ref(false)
 const errorMessage = ref('')
@@ -698,6 +706,69 @@ const article = ref<Partial<API.ArticleVO>>({
 
 let eventSource: EventSource | null = null
 
+const latestFlowStep = computed(() => Math.min(currentStep.value, agentSteps.length - 1))
+const activeStep = computed(() => viewingStep.value ?? latestFlowStep.value)
+const currentProgressStepTitle = computed(() => agentSteps[latestFlowStep.value]?.title || '-')
+const displayTitleOptions = computed(() => {
+  if (titleOptions.value.length > 0) {
+    return titleOptions.value
+  }
+
+  if (article.value.mainTitle) {
+    return [{
+      mainTitle: article.value.mainTitle,
+      subTitle: article.value.subTitle || '',
+    }]
+  }
+
+  return []
+})
+
+const followLatestStep = () => {
+  viewingStep.value = null
+}
+
+const canNavigateToStep = (index: number) => {
+  if (index > currentStep.value || index < 0 || index >= agentSteps.length) {
+    return false
+  }
+
+  return currentPhase.value !== 'INPUT'
+}
+
+const getDisplayPhaseByStep = (index: number) => {
+  switch (index) {
+    case 0:
+      return 'TITLE_SELECTING'
+    case 1:
+      return outline.value.length > 0 ? 'OUTLINE_EDITING' : 'OUTLINE_GENERATING'
+    case 5:
+      return isCompleted.value ? 'COMPLETED' : 'CONTENT_GENERATING'
+    default:
+      return 'CONTENT_GENERATING'
+  }
+}
+
+const displayPhase = computed(() => {
+  if (viewingStep.value === null) {
+    return currentPhase.value
+  }
+  return getDisplayPhaseByStep(viewingStep.value)
+})
+
+const navigateToStep = (index: number) => {
+  if (!canNavigateToStep(index)) {
+    return
+  }
+
+  viewingStep.value = index
+  nextTick(() => {
+    if (mainContentRef.value) {
+      mainContentRef.value.scrollTop = 0
+    }
+  })
+}
+
 // Markdown 转 HTML
 const markdownToHtml = (markdown: string | undefined) => {
   return marked(markdown || '')
@@ -726,6 +797,7 @@ const startCreate = async () => {
 
   isCreating.value = true
   currentStep.value = 0
+  followLatestStep()
   realtimeLogs.value = []
   addLog('开始创建文章任务...', 'info')
 
@@ -794,6 +866,7 @@ const handleSSEMessage = (msg: SSEMessage) => {
     case 'TITLES_GENERATED':
       // 标题方案生成完成，切换到选择标题阶段
       currentPhase.value = 'TITLE_SELECTING'
+      currentStep.value = Math.max(currentStep.value, 1)
       titleOptions.value = msg.titleOptions || []
       isCreating.value = false
       addLog(`生成了 ${msg.titleOptions?.length || 0} 个标题方案`, 'success')
@@ -802,6 +875,7 @@ const handleSSEMessage = (msg: SSEMessage) => {
     case 'AGENT2_STREAMING':
       // 大纲流式输出（显示生成中状态）
       currentPhase.value = 'OUTLINE_GENERATING'
+      currentStep.value = Math.max(currentStep.value, 1)
       isOutlineStreaming.value = true
       outlineRaw.value += msg.content || ''
       scrollToBottom()
@@ -810,6 +884,7 @@ const handleSSEMessage = (msg: SSEMessage) => {
     case 'OUTLINE_GENERATED':
       // 大纲生成完成，切换到编辑大纲阶段
       currentPhase.value = 'OUTLINE_EDITING'
+      currentStep.value = Math.max(currentStep.value, 1)
       outline.value = msg.outline || []
       isCreating.value = false
       isOutlineStreaming.value = false
@@ -898,6 +973,8 @@ const handleConfirmTitle = async (data: {mainTitle: string, subTitle: string, us
     // 保存标题信息，用于大纲生成阶段展示
     article.value.mainTitle = data.mainTitle
     article.value.subTitle = data.subTitle
+    currentStep.value = Math.max(currentStep.value, 1)
+    followLatestStep()
     // 不直接切换阶段，等待 SSE 消息 OUTLINE_GENERATED
     message.success('标题已确认，正在生成大纲...')
   } catch (error) {
@@ -918,6 +995,7 @@ const handleConfirmOutline = async (outlineData: Array<{section: number, title: 
     })
     // 更新 outlineRaw 为用户修改后的大纲，确保 CONTENT_GENERATING 阶段展示正确的大纲
     outlineRaw.value = JSON.stringify({ sections: outlineData })
+    followLatestStep()
     // 不直接切换阶段，等待后端开始生成正文并推送 AGENT3_STREAMING
     message.success('大纲已确认，正在生成正文...')
   } catch (error) {
@@ -968,6 +1046,7 @@ const resetCreate = () => {
   isStreaming.value = false
   isOutlineStreaming.value = false
   currentStep.value = 0
+  followLatestStep()
   imageCount.value = 0
   imageProgress.value = 0
   outlineRaw.value = ''
@@ -1042,10 +1121,35 @@ onBeforeUnmount(() => {
 }
 
 .flow-item {
+  width: 100%;
   display: flex;
   gap: 14px;
   padding: 14px 0;
   position: relative;
+  border: 0;
+  background: transparent;
+  border-radius: var(--radius-md);
+  outline: none;
+  text-align: left;
+  font: inherit;
+  transition: background var(--transition-normal), box-shadow var(--transition-normal);
+
+  &.navigable {
+    cursor: pointer;
+  }
+
+  &:disabled {
+    cursor: default;
+  }
+
+  &.navigable:hover,
+  &.navigable:focus-visible {
+    background: rgba(34, 197, 94, 0.06);
+  }
+
+  &.navigable:focus-visible {
+    box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.16);
+  }
 
   &:not(:last-child)::before {
     content: '';
@@ -1063,6 +1167,10 @@ onBeforeUnmount(() => {
 
   &.active::before {
     background: linear-gradient(180deg, var(--color-primary) 50%, var(--color-border) 50%);
+  }
+
+  &.active.completed::before {
+    background: var(--color-primary);
   }
 }
 
